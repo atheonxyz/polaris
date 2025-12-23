@@ -1,7 +1,15 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { NetworkName, TXIDVersion } from '@railgun-community/shared-models';
-import { initializeEngine, shutdownEngine, isEngineInitialized } from '../core/engine.js';
+import {
+  initializeEngine,
+  shutdownEngine,
+  isEngineInitialized,
+  getScanState,
+  isUTXOScanComplete,
+  MerkletreeScanStatus,
+  type ScanState,
+} from '../core/engine.js';
 import { WalletManager } from '../wallet/wallet-manager.js';
 import { ProviderManager } from '../network/provider-manager.js';
 import { BalanceService } from '../transactions/balance-service.js';
@@ -35,6 +43,35 @@ interface Command {
   usage?: string;
   handler: CommandHandler;
 }
+
+// Helper to ensure wallet is loaded, prompting for password if needed
+const ensureWalletLoaded = async (
+  walletManager: WalletManager,
+  walletId: string,
+): Promise<boolean> => {
+  if (walletManager.isWalletLoaded(walletId)) {
+    return true;
+  }
+
+  output.info('Wallet not loaded. Enter password to load it:');
+  const { password } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'password',
+      message: 'Wallet password:',
+      mask: '*',
+    },
+  ]);
+
+  try {
+    await walletManager.loadWallet(walletId, password);
+    output.success('Wallet loaded!');
+    return true;
+  } catch (err) {
+    output.error(`Failed to load wallet: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    return false;
+  }
+};
 
 // Help text formatting
 const formatHelp = (commands: Command[]): void => {
@@ -606,12 +643,93 @@ const createCommands = (): Command[] => {
     },
   });
 
+  // Sync command
+  commands.push({
+    name: 'sync',
+    aliases: ['sy'],
+    description: 'Show sync status or wait for sync to complete',
+    usage: 'sync [--wait]',
+    handler: async (args, ctx) => {
+      const network = ctx.providerManager.getActiveNetwork();
+      if (!network) {
+        output.error('No network connected. Connect with: network connect');
+        return;
+      }
+
+      const config = NETWORK_CONFIGS[network];
+      if (!config) {
+        output.error('Network config not found');
+        return;
+      }
+
+      const chainId = config.chainId;
+      const state = getScanState(chainId);
+
+      const formatStatus = (status: MerkletreeScanStatus, progress: number): string => {
+        const percent = Math.round(progress * 100);
+        switch (status) {
+          case MerkletreeScanStatus.Started:
+            return chalk.yellow(`Starting...`);
+          case MerkletreeScanStatus.Updated:
+            return chalk.cyan(`${percent}%`);
+          case MerkletreeScanStatus.Complete:
+            return chalk.green(`Complete`);
+          case MerkletreeScanStatus.Incomplete:
+            return chalk.red(`Incomplete`);
+          default:
+            return chalk.dim('Unknown');
+        }
+      };
+
+      output.newline();
+      output.bold(`Sync Status for ${chalk.cyan(network)}:`);
+      output.newline();
+
+      if (!state) {
+        // No active scan data - likely already synced from cache
+        output.success('Data appears to be synced (using cached merkletrees).');
+        output.dim('  If balances show incorrectly, try: br --full');
+        output.newline();
+        return;
+      }
+
+      console.log(`  UTXO Merkletree: ${formatStatus(state.utxoStatus, state.utxoProgress)}`);
+      console.log(`  TXID Merkletree: ${formatStatus(state.txidStatus, state.txidProgress)}`);
+      output.newline();
+
+      const shouldWait = args.includes('--wait') || args.includes('-w');
+
+      if (shouldWait && state.utxoStatus !== MerkletreeScanStatus.Complete) {
+        output.info('Waiting for UTXO sync to complete...');
+        output.dim('  This may take a few minutes on first run.');
+        output.newline();
+
+        // Poll until complete
+        while (!isUTXOScanComplete(chainId)) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          const currentState = getScanState(chainId);
+          if (currentState) {
+            const percent = Math.round(currentState.utxoProgress * 100);
+            process.stdout.write(`\r  Progress: ${percent}%   `);
+          }
+        }
+        console.log();
+        output.success('UTXO sync complete! You can now check balances.');
+      } else if (state.utxoStatus === MerkletreeScanStatus.Complete) {
+        output.success('Sync complete. Ready for balance queries.');
+      } else {
+        output.info('Sync in progress. Use "sync --wait" to wait for completion.');
+      }
+      output.newline();
+    },
+  });
+
   // Balance commands
   commands.push({
     name: 'balance',
     aliases: ['bal', 'b'],
     description: 'Show private (shielded) balances',
-    usage: 'balance [--refresh]',
+    usage: 'balance [--no-refresh]',
     handler: async (args, ctx) => {
       const wallet = await ctx.walletManager.getActiveWallet();
       if (!wallet) {
@@ -619,8 +737,7 @@ const createCommands = (): Command[] => {
         return;
       }
 
-      if (!ctx.walletManager.isWalletLoaded(wallet.id)) {
-        output.error('Wallet not loaded. Load it first with: wallet load');
+      if (!(await ensureWalletLoaded(ctx.walletManager, wallet.id))) {
         return;
       }
 
@@ -630,10 +747,10 @@ const createCommands = (): Command[] => {
         return;
       }
 
-      const shouldRefresh = args.includes('--refresh') || args.includes('-r');
+      const skipRefresh = args.includes('--no-refresh') || args.includes('-n');
 
-      if (shouldRefresh) {
-        output.info('Refreshing balances...');
+      if (!skipRefresh) {
+        output.info('Syncing balances...');
         await ctx.balanceService.refreshBalances(wallet.id, network);
       }
 
@@ -654,7 +771,13 @@ const createCommands = (): Command[] => {
       } else {
         for (const token of balances.tokens) {
           const formattedBalance = formatBalance(token.balance, token.decimals);
-          console.log(`  ${chalk.yellow(token.tokenAddress.substring(0, 10))}...`);
+          const displayName = token.symbol
+            ? chalk.yellow(token.symbol)
+            : chalk.dim(token.tokenAddress.substring(0, 10) + '...');
+          const addressHint = token.symbol
+            ? chalk.dim(` (${token.tokenAddress.substring(0, 10)}...)`)
+            : '';
+          console.log(`  ${displayName}${addressHint}`);
           console.log(`    Balance: ${chalk.green(formattedBalance)}`);
         }
       }
@@ -675,8 +798,7 @@ const createCommands = (): Command[] => {
         return;
       }
 
-      if (!ctx.walletManager.isWalletLoaded(wallet.id)) {
-        output.error('Wallet not loaded.');
+      if (!(await ensureWalletLoaded(ctx.walletManager, wallet.id))) {
         return;
       }
 
@@ -711,8 +833,7 @@ const createCommands = (): Command[] => {
         return;
       }
 
-      if (!ctx.walletManager.isWalletLoaded(wallet.id)) {
-        output.error('Wallet not loaded.');
+      if (!(await ensureWalletLoaded(ctx.walletManager, wallet.id))) {
         return;
       }
 
@@ -815,6 +936,17 @@ export const startREPL = async (options: { debug?: boolean } = {}): Promise<void
     return originalEmit.apply(process, [event, ...args] as Parameters<typeof originalEmit>);
   };
 
+  // Also suppress LEVEL_LEGACY errors that get written to stderr
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (process.stderr as any).write = (chunk: any, encoding?: any, callback?: any): boolean => {
+    const str = typeof chunk === 'string' ? chunk : chunk.toString();
+    if (str.includes('LEVEL_LEGACY')) {
+      return true; // Suppress
+    }
+    return originalStderrWrite(chunk, encoding, callback);
+  };
+
   console.log(BANNER);
 
   if (options.debug) {
@@ -844,8 +976,19 @@ export const startREPL = async (options: { debug?: boolean } = {}): Promise<void
 
   const commands = createCommands();
 
-  // Try to auto-connect to last used network
-  // TODO: Implement session persistence
+  // Auto-connect to Ethereum mainnet on startup
+  try {
+    output.info('Connecting to Ethereum...');
+    const response = await ctx.providerManager.loadNetwork(NetworkName.Ethereum);
+    output.success('Connected to Ethereum');
+    output.dim(`  Shield fee: ${response.feesSerialized.shieldFeeV2} basis points`);
+    output.dim(`  Unshield fee: ${response.feesSerialized.unshieldFeeV2} basis points`);
+    output.newline();
+  } catch (error) {
+    output.warn(`Failed to auto-connect to Ethereum: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    output.dim('  Use "nc" to connect to a network manually.');
+    output.newline();
+  }
 
   output.dim('Type "help" for available commands, "exit" to quit.');
   output.newline();

@@ -11,6 +11,7 @@ import {
   setOnTXIDMerkletreeScanCallback,
   ArtifactStore,
 } from '@railgun-community/wallet';
+import { MerkletreeScanStatus, type MerkletreeScanUpdateEvent } from '@railgun-community/shared-models';
 import type { PolarisConfig } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { getDefaultConfig } from './config.js';
@@ -26,9 +27,19 @@ let engineInitialized = false;
 let currentConfig: PolarisConfig = getDefaultConfig();
 let dbInstance: ClassicLevel | null = null;
 
+// Track scan status per chain
+export interface ScanState {
+  utxoStatus: MerkletreeScanStatus;
+  utxoProgress: number;
+  txidStatus: MerkletreeScanStatus;
+  txidProgress: number;
+}
+
+const scanStates: Map<number, ScanState> = new Map();
+
 // Callbacks
 let onBalanceUpdateHandler: ((data: unknown) => void) | null = null;
-let onScanProgressHandler: ((data: unknown) => void) | null = null;
+let onScanProgressHandler: ((data: MerkletreeScanUpdateEvent) => void) | null = null;
 
 /**
  * Create artifact store for zk-SNARK artifacts
@@ -73,6 +84,21 @@ const ensureDirectories = async (config: PolarisConfig): Promise<void> => {
 };
 
 /**
+ * Get or create scan state for a chain
+ */
+const getOrCreateScanState = (chainId: number): ScanState => {
+  if (!scanStates.has(chainId)) {
+    scanStates.set(chainId, {
+      utxoStatus: MerkletreeScanStatus.Started,
+      utxoProgress: 0,
+      txidStatus: MerkletreeScanStatus.Started,
+      txidProgress: 0,
+    });
+  }
+  return scanStates.get(chainId)!;
+};
+
+/**
  * Default balance update callback
  */
 const defaultBalanceUpdateCallback = (data: unknown): void => {
@@ -85,8 +111,13 @@ const defaultBalanceUpdateCallback = (data: unknown): void => {
 /**
  * Default UTXO merkletree scan callback
  */
-const defaultUTXOMerkletreeScanCallback = (data: unknown): void => {
-  logger.debug('UTXO merkletree scan progress');
+const defaultUTXOMerkletreeScanCallback = (data: MerkletreeScanUpdateEvent): void => {
+  const state = getOrCreateScanState(data.chain.id);
+  state.utxoStatus = data.scanStatus;
+  state.utxoProgress = data.progress;
+
+  logger.debug(`UTXO scan [${data.chain.id}]: ${data.scanStatus} (${Math.round(data.progress * 100)}%)`);
+
   if (onScanProgressHandler) {
     onScanProgressHandler(data);
   }
@@ -95,8 +126,12 @@ const defaultUTXOMerkletreeScanCallback = (data: unknown): void => {
 /**
  * Default TXID merkletree scan callback
  */
-const defaultTXIDMerkletreeScanCallback = (data: unknown): void => {
-  logger.debug('TXID merkletree scan progress');
+const defaultTXIDMerkletreeScanCallback = (data: MerkletreeScanUpdateEvent): void => {
+  const state = getOrCreateScanState(data.chain.id);
+  state.txidStatus = data.scanStatus;
+  state.txidProgress = data.progress;
+
+  logger.debug(`TXID scan [${data.chain.id}]: ${data.scanStatus} (${Math.round(data.progress * 100)}%)`);
 };
 
 /**
@@ -198,6 +233,37 @@ export const setBalanceUpdateHandler = (handler: (data: unknown) => void): void 
 /**
  * Set scan progress handler
  */
-export const setScanProgressHandler = (handler: (data: unknown) => void): void => {
+export const setScanProgressHandler = (handler: (data: MerkletreeScanUpdateEvent) => void): void => {
   onScanProgressHandler = handler;
 };
+
+/**
+ * Get scan state for a chain
+ */
+export const getScanState = (chainId: number): ScanState | undefined => {
+  return scanStates.get(chainId);
+};
+
+/**
+ * Check if chain scan is complete
+ */
+export const isScanComplete = (chainId: number): boolean => {
+  const state = scanStates.get(chainId);
+  if (!state) return false;
+  return (
+    state.utxoStatus === MerkletreeScanStatus.Complete &&
+    state.txidStatus === MerkletreeScanStatus.Complete
+  );
+};
+
+/**
+ * Check if UTXO scan is complete (sufficient for balance queries)
+ */
+export const isUTXOScanComplete = (chainId: number): boolean => {
+  const state = scanStates.get(chainId);
+  if (!state) return false;
+  return state.utxoStatus === MerkletreeScanStatus.Complete;
+};
+
+// Re-export for convenience
+export { MerkletreeScanStatus };

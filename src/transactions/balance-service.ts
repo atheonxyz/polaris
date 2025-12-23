@@ -10,8 +10,10 @@ import {
   TXIDVersion,
   NETWORK_CONFIG,
 } from '@railgun-community/shared-models';
+import { TokenType } from '@railgun-community/engine';
 import type { TokenBalance, WalletBalances } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { getTokenInfo } from '../core/config.js';
 
 export class BalanceService {
   /**
@@ -48,15 +50,31 @@ export class BalanceService {
     // Get balances from the wallet (onlySpendable = false to get all)
     const balances = await wallet.getTokenBalances(txidVersion, chain, false);
 
-    // Convert to our format
+    // Convert to our format - extract actual token addresses from tokenData
     const tokens: TokenBalance[] = [];
 
-    for (const [tokenHash, treeBalance] of Object.entries(balances)) {
+    for (const [_tokenHash, treeBalance] of Object.entries(balances)) {
       if (treeBalance && treeBalance.balance > 0n) {
+        // Only process ERC20 tokens (not NFTs)
+        if (treeBalance.tokenData?.tokenType !== TokenType.ERC20) {
+          continue;
+        }
+
+        // Extract actual token address from tokenData
+        // The tokenAddress in tokenData is stored as hex without 0x prefix
+        const rawAddress = treeBalance.tokenData.tokenAddress;
+        const tokenAddress = rawAddress.startsWith('0x') ? rawAddress : `0x${rawAddress}`;
+
+        // Get token info from our registry for proper decimals
+        const tokenInfo = getTokenInfo(networkName, tokenAddress);
+        const decimals = tokenInfo?.decimals ?? 18;
+        const symbol = tokenInfo?.symbol;
+
         tokens.push({
-          tokenAddress: tokenHash,
+          tokenAddress,
           balance: treeBalance.balance,
-          decimals: 18, // Default, should be fetched from token contract
+          decimals,
+          symbol,
         });
       }
     }
