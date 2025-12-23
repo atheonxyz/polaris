@@ -21,13 +21,13 @@ git clone https://github.com/atheon/polaris.git
 cd polaris
 
 # Install dependencies
-npm install
+pnpm install
 
 # Build
-npm run build
+pnpm run build
 
 # Run
-npm start
+pnpm start
 ```
 
 ## Quick Start
@@ -119,16 +119,16 @@ polaris/
 
 ```bash
 # Run in development mode
-npm run dev
+pnpm run dev
 
 # Type check
-npm run typecheck
+pnpm run typecheck
 
 # Run tests
-npm test
+pnpm test
 
 # Clean build artifacts
-npm run clean
+pnpm run clean
 ```
 
 ## Security
@@ -140,7 +140,8 @@ npm run clean
 
 ## Requirements
 
-- Node.js >= 18.0.0
+- Node.js >= 24.0.0
+- pnpm >= 9.0.0
 - macOS, Linux, or Windows
 
 ## Dependencies

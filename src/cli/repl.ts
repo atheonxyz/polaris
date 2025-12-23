@@ -805,6 +805,16 @@ const findCommand = (input: string, commands: Command[]): { cmd: Command; args: 
 
 // Main REPL loop
 export const startREPL = async (options: { debug?: boolean } = {}): Promise<void> => {
+  // Suppress LEVEL_LEGACY warnings from the LevelDB library
+  const originalEmit = process.emit;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (process as any).emit = function (event: string, ...args: any[]) {
+    if (event === 'warning' && args[0]?.message?.includes('LEVEL_LEGACY')) {
+      return false;
+    }
+    return originalEmit.apply(process, [event, ...args] as Parameters<typeof originalEmit>);
+  };
+
   console.log(BANNER);
 
   if (options.debug) {

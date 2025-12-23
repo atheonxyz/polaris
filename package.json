@@ -41,8 +41,9 @@
     "@types/chai": "^4.3.11"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=24.0.0"
   },
+  "packageManager": "pnpm@9.15.1",
   "author": "Atheon",
   "license": "MIT"
 }

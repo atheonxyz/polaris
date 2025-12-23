@@ -12,7 +12,7 @@ Thank you for your interest in contributing to Polaris!
    ```
 3. Install dependencies:
    ```bash
-   npm install
+   pnpm install
    ```
 4. Create a branch:
    ```bash
@@ -24,25 +24,25 @@ Thank you for your interest in contributing to Polaris!
 ### Building
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 ### Running in Development
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 ### Type Checking
 
 ```bash
-npm run typecheck
+pnpm run typecheck
 ```
 
 ### Testing
 
 ```bash
-npm test
+pnpm test
 ```
 
 ## Code Style
