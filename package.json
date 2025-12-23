@@ -1,0 +1,48 @@
+{
+  "name": "@atheon/polaris",
+  "version": "1.0.0",
+  "description": "Polaris - Privacy-first wallet powered by RAILGUN",
+  "main": "dist/index.js",
+  "bin": {
+    "polaris": "./dist/cli/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli/index.js",
+    "dev": "tsx src/cli/index.ts",
+    "test": "mocha --require tsx --timeout 60000 'src/**/*.test.ts'",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@railgun-community/wallet": "^10.8.1",
+    "@railgun-community/shared-models": "^8.0.0",
+    "@railgun-community/engine": "^9.5.1",
+    "classic-level": "^1.4.1",
+    "commander": "^12.1.0",
+    "inquirer": "^9.2.23",
+    "bip39": "^3.1.0",
+    "snarkjs": "^0.7.1",
+    "chalk": "^5.3.0",
+    "ora": "^8.0.1",
+    "ethers": "^6.13.1",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/inquirer": "^9.0.7",
+    "@types/bip39": "^3.0.0",
+    "typescript": "^5.3.0",
+    "tsx": "^4.7.0",
+    "mocha": "^10.2.0",
+    "chai": "^5.1.0",
+    "@types/mocha": "^10.0.6",
+    "@types/chai": "^4.3.11"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Atheon",
+  "license": "MIT"
+}
